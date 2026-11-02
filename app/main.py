@@ -1,9 +1,13 @@
 from fastapi import FastAPI,Depends,HTTPException,status
 from contextlib import asynccontextmanager
+from app.core.config import settings
+from fastapi.middleware.cors import CORSMiddleware
 from app.routes import (
     users,auth,products,
     branches,supplier,
-    categories,inventory,sales,customers,payment_methods)
+    categories,inventory,sales,
+    customers,payment_methods,forecast
+    )
 from app.core.seed import seed_super_admin
 from app.core.db import engine
 from app.core.error_handlers import register_error_handlers
@@ -17,7 +21,14 @@ app=FastAPI(
     title="Inventory Management API",
     description="Multi-branch inventory management system backend built with FastAPI and PostgreSQL",
     version="1.0.0"
-    )
+) 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+)
 register_error_handlers(app)
 
 app.include_router(users.router,prefix="/api/v1/users")
@@ -30,7 +41,9 @@ app.include_router(categories.router,prefix="/api/v1/categories")
 app.include_router(products.router,prefix="/api/v1/products")
 app.include_router(payment_methods.router,prefix="/api/v1/payment-methods")
 app.include_router(sales.router,prefix="/api/v1/sales")
-app.include_router(customers.router, prefix="/customers")
+app.include_router(customers.router, prefix="/api/v1/customers")
+app.include_router(forecast.router, prefix="/api/v1/forecasts")
+
 
 
 @app.get("/health",tags=["Health Check"])

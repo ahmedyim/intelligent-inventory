@@ -15,6 +15,7 @@ from app.models.supplier import Supplier
 from app.models.inventory import Inventory
 from app.models.stock_movement import StockMovement
 from app.models.activity_logs import ActivityLogModel
+from app.models.forecast import ReorderSuggestion
 
 from alembic import context
 
