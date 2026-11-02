@@ -1,13 +1,10 @@
 import uuid
 from datetime import datetime
 from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 def _normalize_email(v: Optional[str]) -> Optional[str]:
     return v.strip().lower() if v else v
-
 
 class LoginRequest(BaseModel):
     email: str
@@ -15,8 +12,14 @@ class LoginRequest(BaseModel):
     device_name: Optional[str] = Field(default=None, max_length=100)  # e.g. "Ahmed's iPhone"
     _norm = field_validator("email", mode="after")(_normalize_email)
 
+class TokenOut(BaseModel):
+    """Login/refresh response. The refresh token is NOT here: it travels in the HttpOnly cookie."""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
 
 class TokenResponse(BaseModel):
+    """Old shape (refresh token in the body). Kept only so nothing else breaks."""
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -60,7 +63,6 @@ class SessionOut(BaseModel):
     @classmethod
     def _ip_to_str(cls, v):
         return str(v) if v is not None else None
-
 
 class MessageResponse(BaseModel):
     message: str
