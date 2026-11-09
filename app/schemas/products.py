@@ -2,9 +2,19 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.schemas.stock_movements import InitialStock
+
+def _clean_image_url(v: str | None) -> str | None:
+    """'' -> None (clears the image). Only http(s) links are accepted."""
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    if not v.lower().startswith(("https://", "http://")):
+        raise ValueError("image_url must start with http:// or https://")
+    return v
 
 
 class ProductBase(BaseModel):
@@ -12,6 +22,7 @@ class ProductBase(BaseModel):
     barcode: str | None = Field(default=None, max_length=64)
     name: str = Field(min_length=1, max_length=150)
     description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
     unit: str = Field(default="pcs", max_length=20)
     category_id: UUID | None = None
     supplier_id: UUID | None = None
@@ -26,8 +37,14 @@ class ProductCreate(ProductBase):
     # inventory row and an "initial_stock" stock movement in the same transaction.
     initial_stock: InitialStock | None = None
 
+    @field_validator("image_url", mode="after")
+    @classmethod
+    def _check_image_url(cls, v: str | None) -> str | None:
+        return _clean_image_url(v)
+
 
 # Fields that are NOT nullable in the DB: client may omit them, but not send null.
+# image_url is not here on purpose: sending null (or "") clears the image.
 _NON_NULLABLE = {
     "sku", "name", "unit", "cost_price", "selling_price",
     "reorder_level", "lead_time_days", "is_active",
@@ -42,6 +59,7 @@ class ProductUpdate(BaseModel):
     barcode: str | None = Field(default=None, max_length=64)
     name: str | None = Field(default=None, min_length=1, max_length=150)
     description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
     unit: str | None = Field(default=None, max_length=20)
     category_id: UUID | None = None
     supplier_id: UUID | None = None
@@ -50,6 +68,11 @@ class ProductUpdate(BaseModel):
     reorder_level: int | None = Field(default=None, ge=0)
     lead_time_days: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+
+    @field_validator("image_url", mode="after")
+    @classmethod
+    def _check_image_url(cls, v: str | None) -> str | None:
+        return _clean_image_url(v)
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self):
@@ -66,6 +89,7 @@ class ProductRead(ProductBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    total_stock: int = 0
 
 
 class ProductList(BaseModel):

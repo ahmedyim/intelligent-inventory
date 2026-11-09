@@ -5,6 +5,8 @@ Every state-changing function writes an activity-log row in the SAME transaction
 """
 import uuid
 from typing import Optional, Sequence
+from datetime import datetime, timezone
+from app.models.auth_tokens import RefreshTokenModel
 
 from sqlalchemy import select, or_, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -447,3 +449,94 @@ async def delete_user(
     except SQLAlchemyError:
         await db.rollback()
         raise
+    
+    
+# ---------------------------------------------------------------------------
+# Sessions (admin view). One ACTIVE row per signed-in device: refresh rotation
+# revokes the old row each time it creates the new one.
+# ---------------------------------------------------------------------------
+def _active_sessions(user_id: uuid.UUID):
+    return (
+        RefreshTokenModel.user_id == user_id,
+        RefreshTokenModel.revoked.is_(False),
+        RefreshTokenModel.expires_at > datetime.now(timezone.utc),
+    )
+
+
+async def get_session_summary(
+    db: AsyncSession, user_id: uuid.UUID
+) -> tuple[int, Optional[datetime]]:
+    """(number of active devices, last time the user was seen)."""
+    active = (
+        await db.execute(
+            select(func.count()).select_from(RefreshTokenModel).where(*_active_sessions(user_id))
+        )
+    ).scalar_one()
+    last_seen = (
+        await db.execute(
+            select(func.max(RefreshTokenModel.last_used_at)).where(
+                RefreshTokenModel.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none()
+    return active, last_seen
+
+
+async def list_user_sessions(db: AsyncSession, user_id: uuid.UUID) -> Sequence[RefreshTokenModel]:
+    stmt = (
+        select(RefreshTokenModel)
+        .where(*_active_sessions(user_id))
+        .order_by(RefreshTokenModel.last_used_at.desc().nulls_last())
+    )
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def revoke_user_session(
+    db: AsyncSession,
+    target: UserModel,
+    session_id: uuid.UUID,
+    actor: UserModel,
+    device: Optional[dict] = None,
+) -> None:
+    """Sign ONE device of `target` out. The user_id check stops cross-user revokes."""
+    stored = await db.get(RefreshTokenModel, session_id)
+    if not stored or stored.user_id != target.id or stored.revoked:
+        raise NotFoundError("Session not found", code="session_not_found")
+
+    stored.revoked = True
+    add_activity(
+        db,
+        action="user.session_revoked",
+        actor=actor,
+        branch_id=target.branch_id,
+        entity_type="user",
+        entity_id=target.id,
+        description=f"Signed {target.email} out of one device",
+        meta={"session_id": str(session_id), "device_name": stored.device_name},
+        device=device,
+    )
+    await db.commit()
+
+
+async def revoke_all_user_sessions(
+    db: AsyncSession,
+    target: UserModel,
+    actor: UserModel,
+    device: Optional[dict] = None,
+) -> int:
+    """Sign `target` out of EVERY device. Returns how many devices were active."""
+    count, _ = await get_session_summary(db, target.id)
+    await revoke_all_for_user(db, target.id)
+    add_activity(
+        db,
+        action="user.sessions_revoked",
+        actor=actor,
+        branch_id=target.branch_id,
+        entity_type="user",
+        entity_id=target.id,
+        description=f"Signed {target.email} out of all devices",
+        meta={"devices": count},
+        device=device,
+    )
+    await db.commit()
+    return count

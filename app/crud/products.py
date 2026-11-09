@@ -110,6 +110,10 @@ async def get_product_by_barcode(db: AsyncSession, barcode: str) -> Optional[Pro
     )
     return result.scalar_one_or_none()
 
+def _like_pattern(term: str) -> str:
+    """Escape % and _ so they are searched literally, not used as wildcards."""
+    t = term.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{t}%"
 
 async def list_products(
     db: AsyncSession,
@@ -118,9 +122,21 @@ async def list_products(
     supplier_id: Optional[uuid.UUID] = None,
     is_active: Optional[bool] = True,
     search: Optional[str] = None,
+    low_stock: bool = False,
     skip: int = 0,
     limit: int = 50,
-) -> tuple[Sequence[Product], int]:
+) -> tuple[Sequence[tuple[Product, int]], int]:
+    # one row per product with its total stock across all branches
+    stock_sq = (
+        select(
+            Inventory.product_id,
+            func.coalesce(func.sum(Inventory.quantity), 0).label("total_stock"),
+        )
+        .group_by(Inventory.product_id)
+        .subquery()
+    )
+    stock_col = func.coalesce(stock_sq.c.total_stock, 0)
+
     filters = []
     if category_id is not None:
         filters.append(Product.category_id == category_id)
@@ -128,33 +144,39 @@ async def list_products(
         filters.append(Product.supplier_id == supplier_id)
     if is_active is not None:
         filters.append(Product.is_active == is_active)
-    if search:
-        like = f"%{search.strip()}%"
+    if search and search.strip():
+        like = _like_pattern(search)
         filters.append(
             or_(
-                Product.name.ilike(like),
-                Product.sku.ilike(like),
-                Product.barcode.ilike(like),
+                Product.name.ilike(like, escape="\\"),
+                Product.sku.ilike(like, escape="\\"),
+                Product.barcode.ilike(like, escape="\\"),
             )
         )
+    if low_stock:
+        filters.append(stock_col <= Product.reorder_level)
 
     total = (
-        await db.execute(select(func.count()).select_from(Product).where(*filters))
+        await db.execute(
+            select(func.count())
+            .select_from(Product)
+            .outerjoin(stock_sq, stock_sq.c.product_id == Product.id)
+            .where(*filters)
+        )
     ).scalar_one()
 
     rows = (
         await db.execute(
-            select(Product)
+            select(Product, stock_col.label("total_stock"))
+            .outerjoin(stock_sq, stock_sq.c.product_id == Product.id)
             .where(*filters)
-            .order_by(Product.created_at.desc())
+            .order_by(Product.created_at.desc(), Product.id)
             .offset(skip)
             .limit(min(limit, 200))
         )
-    ).scalars().all()
+    ).all()  # list of (Product, total_stock) tuples
 
     return rows, total
-
-
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------

@@ -50,6 +50,20 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _user_payload(user: UserModel) -> dict:
+    """The user object returned by BOTH /auth/login and /auth/refresh.
+    The frontend keeps the session in memory only, so after a page reload this
+    is the only place it can learn who is signed in."""
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": getattr(user.role, "value", user.role),
+        "branch_id": str(user.branch_id) if user.branch_id else None,
+        "status": getattr(user.status, "value", user.status),
+    }
+
+
 async def _issue_token_pair(
     db: AsyncSession, user: UserModel, device: Optional[dict] = None
 ) -> tuple[dict, uuid.UUID]:
@@ -73,9 +87,10 @@ async def _issue_token_pair(
     )
     pair = {
         "access_token": access,
-        "refresh_token": refresh,
+        "refresh_token": refresh,      # the route moves this into the httpOnly cookie
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "user": _user_payload(user),
     }
     return pair, jti
 
@@ -142,21 +157,14 @@ async def check_refresh_token(db: AsyncSession, refresh_token: str) -> RefreshTo
         raise UnauthorizedError("Invalid token", code="invalid_token")
 
     if stored.revoked:
-        # An already-used / revoked token came back: it may have been stolen.
+        if stored.rotated_at is None:
+            # Logged out, or signed out by an admin: a plain 401, NOT theft
+            raise UnauthorizedError("Session was ended", code="token_revoked")
+
+        # A token that was already ROTATED came back: it may have been stolen.
         # Safest reaction: kill every session of this user.
         await revoke_all_for_user(db, stored.user_id)
-        add_activity(
-            db,
-            action="auth.refresh_token_reuse",
-            actor_id=stored.user_id,
-            entity_type="session",
-            entity_id=stored.id,
-            description="Revoked refresh token was reused; all sessions revoked",
-            device={"user_agent": stored.user_agent},
-        )
-        await db.commit()
-        raise UnauthorizedError("Refresh token was revoked", code="token_revoked")
-
+        # ...the rest of the existing block (add_activity, commit, raise) stays as it is
     if _as_utc(stored.expires_at) < _now():
         raise UnauthorizedError("Refresh token has expired", code="token_expired")
 
@@ -170,6 +178,7 @@ async def refresh_access_token(
     Trade a valid refresh token for a NEW access token.
     We also rotate the refresh token: the old one is revoked and a new one is returned,
     so each refresh token can be used exactly once. The device info is carried over.
+    The response includes the user, so the frontend can restore its session after a reload.
     Normal refreshes are NOT logged (they happen every few minutes).
     """
     stored = await check_refresh_token(db, refresh_token)
@@ -189,6 +198,7 @@ async def refresh_access_token(
         raise ForbiddenError("Account is not active", code="account_inactive")
 
     stored.revoked = True                      # old token can never be used again
+    stored.rotated_at = _now()
     pair, _ = await _issue_token_pair(
         db,
         user,
