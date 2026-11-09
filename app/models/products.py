@@ -18,6 +18,7 @@ class Product(Base):
     barcode: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     name: Mapped[str] = mapped_column(String(150), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     unit: Mapped[str] = mapped_column(String(20), default="pcs")  # pcs, kg, box, litre
 
     category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("categories.id"), nullable=True)

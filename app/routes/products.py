@@ -4,8 +4,7 @@ Errors (NotFoundError, ConflictError, ...) are turned into HTTP responses
 by your global exception handlers.
 """
 import uuid
-from typing import Optional
-
+from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,13 +29,13 @@ async def create_product(
     """Create a product. Send `initial_stock` to also create its first stock."""
     return await crud.create_product(db, payload, actor=actor, device=device)
 
-
 @router.get("", response_model=ProductList)
 async def list_products(
     category_id: Optional[uuid.UUID] = None,
     supplier_id: Optional[uuid.UUID] = None,
-    is_active: Optional[bool] = True,
+    status_filter: Literal["active", "inactive", "all"] = Query("active", alias="status"),
     search: Optional[str] = Query(None, description="Name, SKU or barcode"),
+    low_stock: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -46,13 +45,17 @@ async def list_products(
         db,
         category_id=category_id,
         supplier_id=supplier_id,
-        is_active=is_active,
+        is_active={"active": True, "inactive": False, "all": None}[status_filter],
         search=search,
+        low_stock=low_stock,
         skip=skip,
         limit=limit,
     )
     return ProductList(
-        items=[ProductRead.model_validate(p) for p in rows],
+        items=[
+            ProductRead.model_validate(p).model_copy(update={"total_stock": int(stock)})
+            for p, stock in rows
+        ],
         total=total,
         skip=skip,
         limit=limit,
