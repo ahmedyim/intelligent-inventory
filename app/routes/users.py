@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_db
 from app.core.device import device_dep
 from app.core.dependencies import get_current_user, require_admin
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError,BadRequestError
 from app.crud import users as users_crud
 from app.models.users import UserStatus
 from app.schemas.auth import ChangePasswordRequest, MessageResponse
 from app.schemas.users import (
     UserCreate, UserUpdate, UserRole, UserResponse, UserListResponse,
     AdminResetPasswordRequest, StatusUpdate,
+    UserDetailResponse, UserSessionOut, RevokeResult
 )
 
 router = APIRouter(prefix="", tags=["users"])
@@ -90,6 +91,55 @@ async def change_my_password_route(
     )
     return MessageResponse(message="Password changed. Please log in again")
 
+
+def _forbid_self(target, current) -> None:
+    if target.id == current.id:
+        raise BadRequestError(
+            "Use 'Log out of all devices' for your own account", code="self_session_revoke"
+        )
+
+
+@router.get("/{user_id}/detail", response_model=UserDetailResponse)
+async def get_user_detail_route(
+    target=Depends(scoped_user),
+    db: AsyncSession = Depends(get_db),
+):
+    detail = UserDetailResponse.model_validate(target)
+    detail.active_sessions, detail.last_active_at = await users_crud.get_session_summary(db, target.id)
+    return detail
+
+
+@router.get("/{user_id}/sessions", response_model=list[UserSessionOut])
+async def list_user_sessions_route(
+    target=Depends(scoped_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await users_crud.list_user_sessions(db, target.id)
+
+
+@router.delete("/{user_id}/sessions/{session_id}", response_model=MessageResponse)
+async def revoke_user_session_route(
+    session_id: uuid.UUID,
+    target=Depends(scoped_user),
+    db: AsyncSession = Depends(get_db),
+    current=Depends(require_admin),
+    device: dict = Depends(device_dep),
+):
+    _forbid_self(target, current)
+    await users_crud.revoke_user_session(db, target, session_id, actor=current, device=device)
+    return MessageResponse(message="Session revoked")
+
+
+@router.post("/{user_id}/sessions/revoke-all", response_model=RevokeResult)
+async def revoke_all_user_sessions_route(
+    target=Depends(scoped_user),
+    db: AsyncSession = Depends(get_db),
+    current=Depends(require_admin),
+    device: dict = Depends(device_dep),
+):
+    _forbid_self(target, current)
+    count = await users_crud.revoke_all_user_sessions(db, target, actor=current, device=device)
+    return RevokeResult(message="Signed out of all devices", revoked=count)
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user_route(target=Depends(scoped_user)):

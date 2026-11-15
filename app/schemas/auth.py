@@ -1,10 +1,13 @@
 import uuid
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
+from app.schemas.users import UserRole
+
 
 def _normalize_email(v: Optional[str]) -> Optional[str]:
     return v.strip().lower() if v else v
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -12,11 +15,28 @@ class LoginRequest(BaseModel):
     device_name: Optional[str] = Field(default=None, max_length=100)  # e.g. "Ahmed's iPhone"
     _norm = field_validator("email", mode="after")(_normalize_email)
 
+
+class UserSummaryOut(BaseModel):
+    """The signed-in user, returned by BOTH /auth/login and /auth/refresh.
+    The frontend keeps the session in memory only, so after a page reload this
+    is the only place it learns who is signed in."""
+    id: uuid.UUID
+    email: EmailStr
+    role: UserRole
+    full_name: str
+    branch_id: Optional[uuid.UUID] = None
+    status: str   # "ACTIVE" | "INACTIVE" | "SUSPENDED"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TokenOut(BaseModel):
     """Login/refresh response. The refresh token is NOT here: it travels in the HttpOnly cookie."""
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    user: UserSummaryOut
+
 
 class TokenResponse(BaseModel):
     """Old shape (refresh token in the body). Kept only so nothing else breaks."""
@@ -63,6 +83,7 @@ class SessionOut(BaseModel):
     @classmethod
     def _ip_to_str(cls, v):
         return str(v) if v is not None else None
+
 
 class MessageResponse(BaseModel):
     message: str

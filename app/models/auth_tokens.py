@@ -6,7 +6,7 @@ Remember to import this file in app/models/__init__.py, then run an Alembic migr
 """
 import uuid
 from datetime import datetime, timezone
-
+from typing import Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,7 @@ class RefreshTokenModel(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    rotated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     # Device / session info (shown in the "Active sessions" screen)

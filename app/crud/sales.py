@@ -343,12 +343,14 @@ async def void_sale(
 
 # ---------------------------------------------------------------- reads
 async def list_sales(
-    db: AsyncSession, *, branch_id=None, customer_id=None, status=None,
+    db: AsyncSession, *, branch_id=None, customer_id=None, created_by=None, status=None,
     payment_status=None, date_from=None, date_to=None, skip: int = 0, limit: int = 50,
 ):
     filters = []
     if branch_id:
         filters.append(Sale.branch_id == branch_id)
+    if created_by:
+        filters.append(Sale.created_by == created_by)
     if customer_id:
         filters.append(Sale.customer_id == customer_id)
     if status:

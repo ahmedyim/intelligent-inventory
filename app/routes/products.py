@@ -2,14 +2,18 @@
 Product router: thin. No business rules here, only HTTP wiring.
 Errors (NotFoundError, ConflictError, ...) are turned into HTTP responses
 by your global exception handlers.
+
+Branch rule: super admin sees every branch; any other user only sees stock for
+their own branch (see app/core/branch_scope.py). Catalog-wide changes (edit,
+activate, deactivate, delete) are super admin only.
 """
 import uuid
-from typing import Optional
-
+from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user
+from app.crud.branch_scope import resolve_branch_scope
+from app.core.dependencies import get_current_user,require_super_admin
 from app.core.device import get_device_info
 from app.core.db import get_db
 from app.crud import products as crud
@@ -28,6 +32,9 @@ async def create_product(
     device: dict = Depends(get_device_info),
 ):
     """Create a product. Send `initial_stock` to also create its first stock."""
+    if payload.initial_stock is not None:
+        # a branch admin can only create opening stock in their own branch
+        payload.initial_stock.branch_id = resolve_branch_scope(actor, payload.initial_stock.branch_id)
     return await crud.create_product(db, payload, actor=actor, device=device)
 
 
@@ -35,24 +42,33 @@ async def create_product(
 async def list_products(
     category_id: Optional[uuid.UUID] = None,
     supplier_id: Optional[uuid.UUID] = None,
-    is_active: Optional[bool] = True,
+    branch_id: Optional[uuid.UUID] = None,
+    status_filter: Literal["active", "inactive", "all"] = Query("active", alias="status"),
     search: Optional[str] = Query(None, description="Name, SKU or barcode"),
+    low_stock: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    _: UserModel = Depends(get_current_user),
+    actor: UserModel = Depends(get_current_user),
 ):
+    # super admin: whatever was asked (None = all). Others: forced to their own branch.
+    scope = resolve_branch_scope(actor, branch_id)
     rows, total = await crud.list_products(
         db,
         category_id=category_id,
         supplier_id=supplier_id,
-        is_active=is_active,
+        branch_id=scope,  # crud: sum stock and apply low_stock for this branch only
+        is_active={"active": True, "inactive": False, "all": None}[status_filter],
         search=search,
+        low_stock=low_stock,
         skip=skip,
         limit=limit,
     )
     return ProductList(
-        items=[ProductRead.model_validate(p) for p in rows],
+        items=[
+            ProductRead.model_validate(p).model_copy(update={"total_stock": int(stock)})
+            for p, stock in rows
+        ],
         total=total,
         skip=skip,
         limit=limit,
@@ -86,7 +102,7 @@ async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
     db: AsyncSession = Depends(get_db),
-    actor: UserModel = Depends(get_current_user),
+    actor: UserModel = Depends(require_super_admin),
     device: dict = Depends(get_device_info),
 ):
     return await crud.update_product(db, product_id, payload, actor=actor, device=device)
@@ -96,7 +112,7 @@ async def update_product(
 async def activate_product(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    actor: UserModel = Depends(get_current_user),
+    actor: UserModel = Depends(require_super_admin),
     device: dict = Depends(get_device_info),
 ):
     return await crud.set_product_active(db, product_id, True, actor=actor, device=device)
@@ -106,7 +122,7 @@ async def activate_product(
 async def deactivate_product(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    actor: UserModel = Depends(get_current_user),
+    actor: UserModel = Depends(require_super_admin),
     device: dict = Depends(get_device_info),
 ):
     return await crud.set_product_active(db, product_id, False, actor=actor, device=device)
@@ -116,7 +132,7 @@ async def deactivate_product(
 async def delete_product(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    actor: UserModel = Depends(get_current_user),
+    actor: UserModel = Depends(require_super_admin),
     device: dict = Depends(get_device_info),
 ):
     await crud.delete_product(db, product_id, actor=actor, device=device)
