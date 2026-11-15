@@ -11,19 +11,15 @@ from app.core.device import get_device_info
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.crud import sales as crud
 from app.crud import sales_overview as overview_crud
-<<<<<<< HEAD
-=======
 from app.crud import seller as seller_crud
->>>>>>> feature/public-sale-overview
 from app.models.sales import PaymentStatus, SaleStatus
 from app.models.users import UserModel
 from app.schemas.sales import (
     SaleCreate, SaleDetail, SaleList, SaleRead, SalesOverview, SalesPeriod, SaleVoid,
 )
-<<<<<<< HEAD
-=======
+
 from app.schemas.seller import MySalesOverview, SaleCreated, SaleReceipt, SaleRefund
->>>>>>> feature/public-sale-overview
+
 
 router = APIRouter(prefix="", tags=["sales"])
 
@@ -55,24 +51,18 @@ def _ensure_can_view(actor: UserModel, sale) -> None:
     if not allowed:   # same answer as a missing sale, so ids do not leak
         raise NotFoundError("Sale not found", code="sale_not_found")
 
-
-<<<<<<< HEAD
-@router.post("", response_model=SaleRead, status_code=status.HTTP_201_CREATED)
-=======
 @router.post("", response_model=SaleCreated, status_code=status.HTTP_201_CREATED)
->>>>>>> feature/public-sale-overview
+
 async def create_sale(
     payload: SaleCreate,
     db: AsyncSession = Depends(get_db),
     actor: UserModel = Depends(get_current_user),
     device: dict = Depends(get_device_info),
 ):
-<<<<<<< HEAD
-    """Sell products. Reduces stock and records price/cost per line. All or nothing."""
-=======
+
     """Sell products. Reduces stock and records price/cost per line. All or nothing.
     The response never includes cost."""
->>>>>>> feature/public-sale-overview
+
     if _role(actor) != "SUPER_ADMIN" and payload.branch_id != actor.branch_id:
         raise ForbiddenError("You can only sell from your own branch", code="branch_forbidden")
     return await crud.create_sale(db, payload, actor=actor, device=device)
@@ -87,11 +77,9 @@ async def list_sales(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-<<<<<<< HEAD
-    actor: UserModel = Depends(get_current_user),
-=======
+
     actor: UserModel = Depends(require_admin),          # includes cost: admins only
->>>>>>> feature/public-sale-overview
+
 ):
     branch_id, created_by = _scope(actor, branch_id, None)
     rows, total = await crud.list_sales(
@@ -102,20 +90,12 @@ async def list_sales(
         items=[SaleRead.model_validate(r) for r in rows], total=total, skip=skip, limit=limit
     )
 
-
-<<<<<<< HEAD
-# NOTE: "/overview" must stay ABOVE "/{sale_id}", or it is parsed as a UUID.
-@router.get("/overview", response_model=SalesOverview)
-async def sales_overview(
-    period: SalesPeriod = Query(SalesPeriod.month),
-    date_from: Optional[date] = None,    # custom range (inclusive, local dates) beats `period`
-=======
 # NOTE: fixed paths ("/overview", "/mine") must stay ABOVE "/{sale_id}", or they are parsed as a UUID.
 @router.get("/overview", response_model=SalesOverview)
 async def sales_overview(
     period: SalesPeriod = Query(SalesPeriod.month),
     date_from: Optional[date] = None,
->>>>>>> feature/public-sale-overview
+
     date_to: Optional[date] = None,
     branch_id: Optional[uuid.UUID] = None,
     created_by: Optional[uuid.UUID] = Query(None, description="Staff member"),
@@ -140,8 +120,7 @@ async def sales_overview(
     )
 
 
-<<<<<<< HEAD
-=======
+
 @router.get("/mine", response_model=MySalesOverview)
 async def my_sales(
     period: SalesPeriod = Query(SalesPeriod.today),
@@ -166,16 +145,12 @@ async def my_sales(
     )
 
 
->>>>>>> feature/public-sale-overview
+
 @router.get("/{sale_id}", response_model=SaleRead)
 async def get_sale(
     sale_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-<<<<<<< HEAD
-    actor: UserModel = Depends(get_current_user),
-=======
     actor: UserModel = Depends(require_admin),
->>>>>>> feature/public-sale-overview
 ):
     sale = await crud.get_sale_or_404(db, sale_id)
     _ensure_can_view(actor, sale)
