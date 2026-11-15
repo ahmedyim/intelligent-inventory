@@ -7,7 +7,9 @@ from app.routes import (
     branches,supplier,
     categories,inventory,sales,
     customers,payment_methods,
-    forecast,reports
+    forecast,reports,pos,
+    public
+
     )
 from app.core.seed import seed_super_admin
 from app.core.db import engine
@@ -43,9 +45,11 @@ app.include_router(products.router,prefix="/api/v1/products")
 app.include_router(payment_methods.router,prefix="/api/v1/payment-methods")
 app.include_router(sales.router,prefix="/api/v1/sales")
 app.include_router(customers.router, prefix="/api/v1/customers")
-app.include_router(forecast.router, prefix="/api/v1/forecasts")
-app.include_router(reports.router, prefix="/api/v1/reports")
 
+app.include_router(forecast.router, prefix="/api/v1/forecast")
+app.include_router(reports.router, prefix="/api/v1/reports")
+app.include_router(pos.router, prefix="/api/v1/pos")
+app.include_router(public.router, prefix="/api/v1/public")
 
 @app.get("/health",tags=["Health Check"])
 def root_health_check():

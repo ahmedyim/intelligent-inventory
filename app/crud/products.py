@@ -120,24 +120,31 @@ async def list_products(
     *,
     category_id: Optional[uuid.UUID] = None,
     supplier_id: Optional[uuid.UUID] = None,
+    branch_id: Optional[uuid.UUID] = None,  # None = all branches (super admin)
     is_active: Optional[bool] = True,
     search: Optional[str] = None,
     low_stock: bool = False,
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[Sequence[tuple[Product, int]], int]:
-    # one row per product with its total stock across all branches
-    stock_sq = (
-        select(
-            Inventory.product_id,
-            func.coalesce(func.sum(Inventory.quantity), 0).label("total_stock"),
-        )
-        .group_by(Inventory.product_id)
-        .subquery()
+
+    # one row per product with its total stock, for one branch or for all branches
+    stock_q = select(
+        Inventory.product_id,
+        func.coalesce(func.sum(Inventory.quantity), 0).label("total_stock"),
     )
+    if branch_id is not None:
+        stock_q = stock_q.where(Inventory.branch_id == branch_id)
+    stock_sq = stock_q.group_by(Inventory.product_id).subquery()
+
     stock_col = func.coalesce(stock_sq.c.total_stock, 0)
 
     filters = []
+    if branch_id is not None:
+        # Branch view: only products that have an inventory row in THIS branch.
+        # (The outer join below keeps every product, so without this filter
+        # other branches' products come back with stock 0.)
+        filters.append(stock_sq.c.product_id.is_not(None))
     if category_id is not None:
         filters.append(Product.category_id == category_id)
     if supplier_id is not None:
