@@ -12,10 +12,12 @@ from app.routes import (
 
     )
 from app.core.seed import seed_super_admin
-from app.core.db import engine
+from app.core.db import engine,Base
 from app.core.error_handlers import register_error_handlers
 @asynccontextmanager
-async def lifespan(app:FastAPI):
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     await seed_super_admin()
     yield
     await engine.dispose()
