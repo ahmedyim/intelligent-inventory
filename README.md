@@ -1,5 +1,6 @@
-# Inventory Management System     live demo->   https://lay-pulse.vercel.app/
-
+# Inventory Management System     
+live demo->   https://lay-pulse.vercel.app/
+email superadmin@gmail.com  and password Super1234 as super admin
 A multi-tenant, multi-branch inventory system with a FastAPI backend and a React frontend. Each business (tenant) can run several branches, each with its own stock, users and activity. A data-driven forecasting service predicts demand and suggests when and how much to reorder.
 
 > Sections marked **(planned)** or **(example)** describe the intended design. Adjust names to match your code.
