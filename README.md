@@ -9,13 +9,13 @@ A multi-tenant, multi-branch inventory system with a FastAPI backend and a React
 ## Repository layout
 
 ```
-backend/     FastAPI API, database models, migrations
+backend/     FastAPI API, database models, migrations, Dockerfile and docker-compose.yml
 frontend/    React + TypeScript + Vite web app (public site and dashboards)
 README.md
 .gitignore
 ```
 
-Run the two apps separately: the API on port **8000**, the web app on port **5173**.
+Run the two apps separately: the API on port **8000**, the web app on port **5173**. The API and its database can also be started with one command using [Docker](#run-with-docker).
 
 ---
 
@@ -33,6 +33,7 @@ Run the two apps separately: the API on port **8000**, the web app on port **517
 - **Inventory** (planned): categories, suppliers, purchases, transfers between branches.
 - **Forecasting service** (planned): demand forecast, reorder point and safety stock computed from sales history.
 - **Swagger / OpenAPI** documentation out of the box.
+- **Docker support**: API and PostgreSQL start together with `docker compose up`, with a health-checked database and a persistent volume.
 
 **Web app**
 
@@ -55,6 +56,7 @@ Run the two apps separately: the API on port **8000**, the web app on port **517
 | Settings | pydantic-settings (`.env`) |
 | Auth | JWT access + refresh tokens, password hashing |
 | Forecasting | pandas, NumPy, statsmodels |
+| Containers | Docker, Docker Compose |
 | Web app | React, TypeScript, Vite |
 | UI | Tailwind CSS, shadcn/ui, lucide-react icons, sonner toasts |
 | State and data | Redux Toolkit, RTK Query |
@@ -99,7 +101,12 @@ backend/
     scripts/
       seed_super_admin.py   # Creates the first super admin
   alembic/
-  .env
+  Dockerfile
+  docker-compose.yml
+  docker-compose.override.yml
+  .dockerignore
+  .env.example
+  .env                      # local only, never committed
   requirements.txt
 ```
 
@@ -127,6 +134,8 @@ frontend/
 ---
 
 ## Getting started
+
+> Prefer containers? Skip to [Run with Docker](#run-with-docker) to start the API and the database without installing Python or PostgreSQL.
 
 ### 1. Requirements
 
@@ -268,6 +277,201 @@ npm run preview      # serve the production build locally
 ```
 
 Log in at `http://localhost:5173/login` with the super admin e-mail and password from the backend `.env`.
+
+---
+
+## Run with Docker
+
+Docker starts the API and PostgreSQL together with one command, so you do not need Python or PostgreSQL installed on your machine. It is also the same setup you can deploy to a server.
+
+### What you get
+
+| Service | Image | Purpose | Port |
+|---|---|---|---|
+| `api` | built from `backend/Dockerfile` | FastAPI application | `8000` |
+| `db` | `postgres:16` | PostgreSQL database | `5433` on your PC (`5432` inside Docker) |
+
+Docker Compose creates a private network for both services, so the API reaches the database by the name `db`. The database files live in a named volume (`pgdata`), so your data survives when containers are stopped, rebuilt or deleted.
+
+The web app is not containerized yet. Run it with `npm run dev` as described above; it talks to the API on `http://localhost:8000`.
+
+### Files
+
+All Docker files live in `backend/`:
+
+```
+backend/
+  Dockerfile                    # how to build the API image
+  docker-compose.yml            # API + database (production-like base)
+  docker-compose.override.yml   # development extras: auto-reload and live code mount
+  .dockerignore                 # files that must not enter the image
+  .env.example                  # copy to .env and fill in
+```
+
+### Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /code
+
+# Build tools needed by some Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies first so Docker can cache this layer
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Application code and migrations
+COPY alembic.ini .
+COPY alembic ./alembic
+COPY app ./app
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+```
+
+The `alembic` folder and `alembic.ini` are copied so you can run migrations inside the container. The database driver in your `DATABASE_URL` (for example `asyncpg` or `psycopg`) must be listed in `requirements.txt`.
+
+### docker-compose.yml
+
+```yaml
+services:
+  api:
+    build: .
+    container_name: inventory-api
+    env_file: .env
+    environment:
+      # Inside Docker the database host is the service name "db", not localhost
+      DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/inventory
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    container_name: inventory-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: inventory
+    ports:
+      - "5433:5432"            # optional: connect with pgAdmin or DBeaver on localhost:5433
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d inventory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+```
+
+`docker-compose.override.yml` is read automatically in development and adds auto-reload and a live mount of your code:
+
+```yaml
+services:
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/code/app
+```
+
+### .dockerignore
+
+```
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.git/
+.vscode/
+.idea/
+*.log
+```
+
+### Environment for Docker
+
+Use the same `backend/.env` as for a local run and add the database password:
+
+```env
+DB_PASSWORD=change-me
+```
+
+The `DATABASE_URL` line in `.env` may keep `localhost` for running without Docker. The `environment:` entry in `docker-compose.yml` overrides it inside the container.
+
+For plain `http://localhost`, keep `COOKIE_SECURE=false`, otherwise the browser will not store the refresh cookie.
+
+### First run
+
+```bash
+cd backend
+cp .env.example .env        # Windows: copy .env.example .env  (then edit the values)
+
+docker compose up -d --build
+docker compose exec api alembic upgrade head
+docker compose exec api python -m app.scripts.seed_super_admin
+```
+
+Open `http://localhost:8000/docs`. Then start the web app in another terminal (`cd frontend && npm run dev`) and log in with the super admin from your `.env`.
+
+### Everyday commands
+
+| Task | Command |
+|---|---|
+| Start (build if needed) | `docker compose up -d --build` |
+| Show running services | `docker compose ps` |
+| Follow API logs | `docker compose logs -f api` |
+| Open a shell in the API container | `docker compose exec api bash` |
+| Run migrations | `docker compose exec api alembic upgrade head` |
+| Open a database shell | `docker compose exec db psql -U postgres -d inventory` |
+| Restart the API | `docker compose restart api` |
+| Stop and remove containers (data is kept) | `docker compose down` |
+| Stop and delete the database volume | `docker compose down -v` |
+
+### Key concepts
+
+| Term | Meaning |
+|---|---|
+| Image | A built, read-only package of your app and its dependencies (from the Dockerfile). |
+| Container | A running instance of an image. |
+| Volume | Storage outside the container. `pgdata` keeps the database when containers are removed. |
+| Network | A private virtual network. Services reach each other by name (`api` talks to `db`). |
+
+### Development and production
+
+- **Development**: `docker compose up -d --build` loads the override file, so the server reloads when you edit files in `backend/app`.
+- **Production**: run only the base file so there is no reload and no code mount:
+  ```bash
+  docker compose -f docker-compose.yml up -d --build
+  ```
+  Also set `COOKIE_SECURE=true`, `CSRF_REQUIRED=true`, real `FRONTEND_URL` and `CORS_ORIGINS`, new random secrets, and put the API behind HTTPS (for example a reverse proxy such as Nginx or Caddy). Do not publish the database port (`5433`) on a public server.
+
+### Troubleshooting
+
+| Problem | Likely cause and fix |
+|---|---|
+| API cannot connect to the database | `DATABASE_URL` still uses `localhost`. Inside Docker the host must be `db`. |
+| `alembic: command not found` or no `alembic.ini` | The Dockerfile must copy `alembic.ini` and `alembic/` (see above), then rebuild with `--build`. |
+| `libpq` or driver import error | Add the driver to `requirements.txt` (for example `psycopg[binary]` or `asyncpg`) and rebuild. |
+| Login works but the session is lost on reload | `COOKIE_SECURE=true` on plain `http://localhost`, or `FRONTEND_URL` and `CORS_ORIGINS` do not match the web app address. |
+| Port already in use | Another service uses port 8000 or 5433. Change the left side of the mapping, for example `"8001:8000"`. |
+| Changes in the code do not appear | You ran only the base file. Use `docker compose up -d --build` (with the override) in development. |
+| Need a clean database | `docker compose down -v`, then run the migrations and the seed script again. |
 
 ---
 
@@ -438,6 +642,7 @@ Forecasts should be recomputed automatically, for example every night, using a s
 - The frontend keeps the access token in memory only; never store tokens in `localStorage`.
 - Change the seed super admin password after the first login.
 - Never log passwords or reset tokens (the code already follows this).
+- Docker: keep `.env` out of the image (`.dockerignore`) and out of Git; pass settings at run time with `env_file`. Do not publish the database port on a public server.
 
 ---
 
@@ -471,7 +676,8 @@ npm run build
 - [ ] Purchases and sales reports
 - [ ] Forecasting service and reorder suggestions
 - [ ] Reports and dashboards
-- [ ] Docker and CI
+- [x] Docker (API and PostgreSQL with Docker Compose)
+- [ ] CI pipeline and frontend container
 
 ---
 
