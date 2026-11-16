@@ -1,0 +1,37 @@
+services:
+  api:
+    build: .
+    container_name: ai-inventory-api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # overrides the localhost URL in .env: inside Docker the database host is the service name "db"
+      DATABASE_URL: postgresql+psycopg://postgres:db-password@db:5432/ai_inventory
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app:/code/app # dev only: code changes reload the server
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    container_name: ai-inventory-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: db-password
+      POSTGRES_DB: ai_inventory
+    ports:
+      - "5433:5432" # optional: lets DBeaver/pgAdmin connect on localhost:5433
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d ai_inventory" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
