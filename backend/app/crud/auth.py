@@ -4,7 +4,7 @@ refresh          -> checks refresh token -> REVOKES it -> issues a brand-new pai
                     the new row keeps the same device name
 logout           -> revokes the given refresh token (this device)
 logout all       -> revokes every refresh token of the user
-sessions         -> list active devices / revoke one device
+sessions         -> list active devices / revoke one device (user or super admin)
 forgot password  -> creates a one-time token, e-mails a link (always answers "ok")
 reset password   -> checks the one-time token -> sets new password -> logs out everywhere
 
@@ -31,6 +31,10 @@ from app.crud.users import authenticate_user, get_user_by_email, get_user_by_id
 from app.models.auth_tokens import PasswordResetTokenModel, RefreshTokenModel
 from app.models.users import UserModel, UserStatus
 
+# A rotated token that comes back within this many seconds is a parallel request
+# (React StrictMode, several 401s at once), not theft.
+REFRESH_REUSE_GRACE_SECONDS = 10
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,7 +54,7 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _user_payload(user: UserModel) -> dict:
+def user_payload(user: UserModel) -> dict:
     """The user object returned by BOTH /auth/login and /auth/refresh.
     The frontend keeps the session in memory only, so after a page reload this
     is the only place it can learn who is signed in."""
@@ -90,7 +94,7 @@ async def _issue_token_pair(
         "refresh_token": refresh,      # the route moves this into the httpOnly cookie
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        "user": _user_payload(user),
+        "user": user_payload(user),
     }
     return pair, jti
 
@@ -161,10 +165,26 @@ async def check_refresh_token(db: AsyncSession, refresh_token: str) -> RefreshTo
             # Logged out, or signed out by an admin: a plain 401, NOT theft
             raise UnauthorizedError("Session was ended", code="token_revoked")
 
-        # A token that was already ROTATED came back: it may have been stolen.
+        # Rotated a moment ago: two refresh calls raced each other. Not theft.
+        age = (_now() - _as_utc(stored.rotated_at)).total_seconds()
+        if age <= REFRESH_REUSE_GRACE_SECONDS:
+            raise UnauthorizedError("Refresh already used", code="refresh_in_flight")
+
+        # A token that was rotated long ago came back: it may have been stolen.
         # Safest reaction: kill every session of this user.
         await revoke_all_for_user(db, stored.user_id)
-        # ...the rest of the existing block (add_activity, commit, raise) stays as it is
+        add_activity(
+            db,
+            action="auth.refresh_reuse_detected",
+            actor_id=stored.user_id,
+            entity_type="session",
+            entity_id=stored.id,
+            description="Rotated refresh token reused; all sessions revoked",
+            device={"ip_address": None, "user_agent": stored.user_agent},
+        )
+        await db.commit()          # commit BEFORE raising, or the revoke is rolled back
+        raise UnauthorizedError("Session compromised", code="token_reuse")
+
     if _as_utc(stored.expires_at) < _now():
         raise UnauthorizedError("Refresh token has expired", code="token_expired")
 
@@ -256,6 +276,26 @@ async def logout_all(
     await db.commit()
 
 
+async def admin_revoke_all(
+    db: AsyncSession, admin: UserModel, user_id: uuid.UUID, device: Optional[dict] = None
+) -> int:
+    """Super admin signs a user out of every device. Returns how many were active."""
+    count = len(await list_sessions(db, user_id))
+    await revoke_all_for_user(db, user_id)
+    add_activity(
+        db,
+        action="auth.admin_logout_all",
+        actor=admin,                      # the admin is recorded, not the target user
+        entity_type="user",
+        entity_id=user_id,
+        description="Admin signed the user out of all devices",
+        meta={"revoked": count},
+        device=device,
+    )
+    await db.commit()
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Sessions (devices)
 # ---------------------------------------------------------------------------
@@ -279,20 +319,23 @@ async def revoke_session(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     device: Optional[dict] = None,
+    acting_admin: Optional[UserModel] = None,
 ) -> None:
-    """Log out ONE device. The user_id check stops users from revoking other people's sessions."""
+    """Log out ONE device. The user_id check stops users from revoking other people's sessions.
+    Pass acting_admin when a super admin does it, so the log names the admin."""
     stored = await db.get(RefreshTokenModel, session_id)
     if not stored or stored.user_id != user_id:
         raise BadRequestError("Session not found", code="session_not_found")
     stored.revoked = True
+    actor = {"actor": acting_admin} if acting_admin else {"actor_id": user_id}
     add_activity(
         db,
         action="auth.session_revoked",
-        actor_id=user_id,
+        **actor,
         entity_type="session",
         entity_id=session_id,
-        description="User revoked a device session",
-        meta={"device_name": stored.device_name},
+        description="Admin revoked a device session" if acting_admin else "User revoked a device session",
+        meta={"device_name": stored.device_name, "target_user_id": str(user_id)},
         device=device,
     )
     await db.commit()

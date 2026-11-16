@@ -12,7 +12,7 @@ from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.crud import auth as auth_service
 from app.schemas.auth import (
     ForgotPasswordRequest, LoginRequest, MessageResponse,
-    ResetPasswordRequest, SessionOut, TokenOut,
+    ResetPasswordRequest, SessionOut, TokenOut, UserSummaryOut,
 )
 
 router = APIRouter(tags=["auth"])   # the prefix ("/auth") is set in main.py
@@ -73,6 +73,8 @@ def csrf_guard(
         own_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
         if origin not in settings.allowed_origins and origin != own_origin:
             raise ForbiddenError("Origin not allowed", code="csrf_failed")
+
+
 def send_reset_email(email: str, raw_token: str) -> None:
     """Placeholder: plug in your e-mail sender here."""
     link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
@@ -134,7 +136,17 @@ async def logout_all_route(
 
 
 # ---------------------------------------------------------------------------
-# Sessions (devices)
+# Current user (polled by the frontend to detect a forced sign-out)
+# ---------------------------------------------------------------------------
+@router.get("/me", response_model=UserSummaryOut)
+async def me_route(current_user=Depends(get_current_user)):
+    """Cheap authenticated check. get_current_user returns 401 token_revoked once
+    this device was signed out, so the frontend finds out without a page reload."""
+    return auth_service.user_payload(current_user)
+
+
+# ---------------------------------------------------------------------------
+# My own sessions (devices)
 # ---------------------------------------------------------------------------
 @router.get("/sessions", response_model=list[SessionOut])
 async def sessions_route(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -143,6 +155,7 @@ async def sessions_route(current_user=Depends(get_current_user), db: AsyncSessio
         SessionOut(
             id=r.id,
             device_name=r.device_name,
+            user_agent=r.user_agent,
             ip_address=r.ip_address,
             last_used_at=r.last_used_at,
             created_at=r.created_at,
@@ -164,6 +177,7 @@ async def revoke_session_route(
     if str(session_id) == current_user.session_id:    # user removed THIS device
         _clear_refresh_cookie(response)
     return MessageResponse(message="Session revoked")
+
 
 # ---------------------------------------------------------------------------
 # Forgot / reset password (no cookie involved)
