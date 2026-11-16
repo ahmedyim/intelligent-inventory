@@ -14,6 +14,7 @@ from app.core.db import get_db
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.tokens import ACCESS, decode_token
 from app.crud.users import get_user_by_id
+from app.models.auth_tokens import RefreshTokenModel      # NEW
 from app.models.users import UserModel, UserStatus
 from app.schemas.users import UserRole
 
@@ -42,19 +43,30 @@ async def get_current_user(
         raise ForbiddenError("Account is not active", code="account_inactive")
 
     # Which device this access token belongs to (used by GET /sessions -> is_current).
-    # Use the claim name that create_access_token writes ("sid", "session_id" or "jti").
-    user.session_id = payload.get("sid")
+    sid = payload.get("sid")
+    user.session_id = sid
+
+    # NEW: was this device signed out on purpose (logout, admin sign-out, suspend, password reset)?
+    # A row that is revoked WITH rotated_at set is just a normal refresh, so it is allowed.
+    if sid:
+        try:
+            row = await db.get(RefreshTokenModel, uuid.UUID(sid))
+        except ValueError:
+            raise UnauthorizedError("Invalid token", code="invalid_token")
+        if row is None or (row.revoked and row.rotated_at is None):
+            raise UnauthorizedError("Session was ended", code="token_revoked")
+
     return user
 
 
 def require_role(*allowed: UserRole):
     """Usage:  Depends(require_role(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN))"""
     async def checker(user: UserModel = Depends(get_current_user)) -> UserModel:
-        print(user.role,"not allowed in",allowed)
         if user.role not in allowed:
             raise ForbiddenError("You do not have permission", code="forbidden")
         return user
     return checker
+
 
 require_super_admin = require_role(UserRole.SUPER_ADMIN)
 require_admin = require_role(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN)

@@ -200,3 +200,64 @@ async def delete_user_route(
 ):
     await users_crud.delete_user(db, target.id, actor=current, device=device)
     return MessageResponse(message="User deleted")
+
+# ---------------------------------------------------------------------------
+# 1) core/dependencies.py  -> add this (skip if you already have a super-admin guard)
+# ---------------------------------------------------------------------------
+from fastapi import Depends
+from app.core.exceptions import ForbiddenError
+
+
+def require_super_admin(current_user=Depends(get_current_user)):
+    role = str(getattr(current_user.role, "value", current_user.role)).upper()
+    if role != "SUPER_ADMIN":
+        raise ForbiddenError("Super admin only", code="forbidden")
+    return current_user
+
+
+# ---------------------------------------------------------------------------
+# 2) users router (router = APIRouter(prefix="/users", tags=["users"]))
+#    Paste below your existing routes. Add the imports at the top of that file.
+# ---------------------------------------------------------------------------
+import uuid
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.db import get_db
+from app.core.device import device_dep
+from app.core.dependencies import require_super_admin
+from app.crud import auth as auth_service
+from app.schemas.auth import MessageResponse, RevokeResult, SessionOut
+
+
+@router.get("/{user_id}/sessions", response_model=list[SessionOut])
+async def user_sessions(
+    user_id: uuid.UUID,
+    admin=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await auth_service.list_sessions(db, user_id)
+    return [SessionOut.model_validate(r) for r in rows]
+
+
+@router.delete("/{user_id}/sessions/{session_id}", response_model=MessageResponse)
+async def revoke_user_session(
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    admin=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+    device: dict = Depends(device_dep),
+):
+    await auth_service.revoke_session(db, user_id, session_id, device, acting_admin=admin)
+    return MessageResponse(message="Session revoked")
+
+
+@router.post("/{user_id}/sessions/revoke-all", response_model=RevokeResult)
+async def revoke_all_user_sessions(
+    user_id: uuid.UUID,
+    admin=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+    device: dict = Depends(device_dep),
+):
+    count = await auth_service.admin_revoke_all(db, admin, user_id, device)
+    return RevokeResult(revoked=count)

@@ -74,6 +74,7 @@ class SessionOut(BaseModel):
 
     id: uuid.UUID
     device_name: Optional[str] = None
+    user_agent: Optional[str] = None          # NEW: StaffDetail uses describeAgent(user_agent)
     ip_address: Optional[str] = None
     last_used_at: Optional[datetime] = None
     created_at: datetime
@@ -83,6 +84,10 @@ class SessionOut(BaseModel):
     @classmethod
     def _ip_to_str(cls, v):
         return str(v) if v is not None else None
+
+
+class RevokeResult(BaseModel):                # NEW: admin "sign out everywhere"
+    revoked: int
 
 
 class MessageResponse(BaseModel):
