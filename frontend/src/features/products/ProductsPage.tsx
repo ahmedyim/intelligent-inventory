@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/table';
 import ProductImage from '@/components/ProductImage';
 import { useAppSelector } from '@/app/hooks';
+import ImageUploadButton from '@/features/products/ImageUploadButton';
 import {
   useAdjustStockMutation,
   useCreateProductMutation,
@@ -628,23 +629,39 @@ export default function ProductsPage({ basePath }: ProductsPageProps) {
             </div>
 
             <div className="col-span-2 space-y-1.5">
-              <Label htmlFor="image_url">Image link (optional)</Label>
-              <div className="flex items-center gap-3">
-                <ProductImage src={previewSrc} alt="Image preview" className="h-12 w-12" />
-                <Input
-                  id="image_url"
-                  type="url"
-                  inputMode="url"
-                  placeholder="https://..."
-                  value={form.image_url}
-                  onChange={set('image_url')}
-                  maxLength={500}
-                  aria-invalid={imageInvalid}
-                />
+              <Label htmlFor="image_url">Product image (optional)</Label>
+              <div className="flex items-start gap-3">
+                <ProductImage src={previewSrc} alt="Image preview" className="h-16 w-16" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ImageUploadButton onUploaded={(url) => setForm((f) => ({ ...f, image_url: url }))} />
+                    {form.image_url && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setForm((f) => ({ ...f, image_url: '' }))}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <Input
+                    id="image_url"
+                    type="url"
+                    inputMode="url"
+                    placeholder="or paste an image link (https://...)"
+                    value={form.image_url}
+                    onChange={set('image_url')}
+                    maxLength={500}
+                    aria-invalid={imageInvalid}
+                  />
+                </div>
               </div>
               {imageInvalid && (
                 <p className="text-sm text-red-600">The link must start with http:// or https://</p>
               )}
+              <p className="text-xs text-muted-foreground">JPG, PNG or WebP. Large photos are resized before they upload.</p>
             </div>
 
             <div className="space-y-1.5">

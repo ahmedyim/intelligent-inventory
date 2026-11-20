@@ -21,7 +21,7 @@ from app.models.supplier import Supplier
 from app.models.users import UserModel
 from app.schemas.inventory import StockReceive
 from app.schemas.products import ProductCreate, ProductUpdate
-
+from app.services import images
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +79,15 @@ async def _ensure_relations_exist(
         if not supplier.is_active:
             raise BadRequestError("Supplier is inactive", code="supplier_inactive")
 
-
+async def _drop_image_if_unused(db: AsyncSession, url: Optional[str]) -> None:
+    """Delete the stored file unless another product still uses the same link."""
+    if not url:
+        return
+    in_use = (
+        await db.execute(select(Product.id).where(Product.image_url == url).limit(1))
+    ).scalar_one_or_none()
+    if in_use is None:
+        await images.delete_image(url)
 # ---------------------------------------------------------------------------
 # Read (no logging: reads must not write rows)
 # ---------------------------------------------------------------------------
@@ -301,7 +309,7 @@ async def update_product(
 
     # Compute the diff BEFORE applying anything, while old values still exist.
     changes = diff(product, update_data)
-
+    old_image = product.image_url
     for key, value in update_data.items():
         setattr(product, key, value)
 
@@ -338,6 +346,8 @@ async def update_product(
         raise ConflictError("SKU or barcode already in use", code="conflict")
 
     await db.refresh(product)
+    if "image_url" in update_data and old_image and old_image != product.image_url:
+        await _drop_image_if_unused(db, old_image)
     return product
 
 
@@ -404,6 +414,7 @@ async def delete_product(
         "name": product.name,
         "barcode": product.barcode,
     }
+    image_url = product.image_url
 
     try:
         await db.delete(product)
@@ -428,3 +439,4 @@ async def delete_product(
     except SQLAlchemyError:
         await db.rollback()
         raise
+    await _drop_image_if_unused(db, image_url)

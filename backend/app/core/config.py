@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str | None = None              # e.g. ".myshop.com" for api.myshop.com + app.myshop.com
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_PATH: str = "/api/v1/auth"     # the cookie is sent ONLY to these URLs
-
+    
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
+    CLOUDINARY_FOLDER: str = "inventory/products"
+    MAX_IMAGE_MB: int = 5
     # ---- CSRF header check on login/refresh/logout ----
     CSRF_REQUIRED: bool = True                    # set CSRF_REQUIRED=false in .env for development
 

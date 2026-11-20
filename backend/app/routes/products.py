@@ -9,17 +9,18 @@ activate, deactivate, delete) are super admin only.
 """
 import uuid
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status,File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud.branch_scope import resolve_branch_scope
-from app.core.dependencies import get_current_user,require_super_admin
+from app.core.dependencies import get_current_user,require_super_admin,require_admin
 from app.core.device import get_device_info
 from app.core.db import get_db
 from app.crud import products as crud
 from app.core.exceptions import NotFoundError
 from app.models.users import UserModel
-from app.schemas.products import ProductCreate, ProductList, ProductRead, ProductUpdate
+from app.schemas.products import ImageUploaded, ProductCreate, ProductList, ProductRead, ProductUpdate
+from app.services import images
 
 router = APIRouter(prefix="", tags=["products"])
 
@@ -74,6 +75,14 @@ async def list_products(
         limit=limit,
     )
 
+
+@router.post("/image", response_model=ImageUploaded)
+async def upload_product_image(
+    file: UploadFile = File(...),
+    _: UserModel = Depends(require_admin),
+):
+    """Upload a product photo (JPG, PNG or WebP). Returns the link to save in image_url."""
+    return await images.upload_product_image(file)
 
 # NOTE: must stay ABOVE "/{product_id}", otherwise "by-barcode" is parsed as a UUID.
 @router.get("/by-barcode/{barcode}", response_model=ProductRead)
