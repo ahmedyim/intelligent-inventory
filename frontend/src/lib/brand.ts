@@ -1,7 +1,7 @@
 export const BRAND = {
-  name: 'Lay Digital',
+  name: 'Lay Pulse',
   tagline: 'Smart inventory for growing businesses',
-  email: 'info@laydigital.com',
+  email: 'info@laypulse.com',
   phone: '+251 900 000 000',
   address: 'Addis Ababa, Ethiopia',
 } as const;

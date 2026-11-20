@@ -5,6 +5,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.schemas.stock_movements import InitialStock
 
+
+class ImageUploaded(BaseModel):
+    url: str
+    width: int | None = None
+    height: int | None = None
+    bytes: int | None = None
+
 def _clean_image_url(v: str | None) -> str | None:
     """'' -> None (clears the image). Only http(s) links are accepted."""
     if v is None:

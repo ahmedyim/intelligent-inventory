@@ -14,6 +14,7 @@ click==8.5.0
 click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.4.1
+cloudinary==1.47.0
 colorama==0.4.6
 coverage==7.17.0
 dnspython==2.9.0
@@ -49,6 +50,7 @@ pytest-asyncio==1.4.1
 pytest-cov==7.1.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.4
+python-multipart==0.0.34
 redis==8.1.0
 six==1.17.0
 SQLAlchemy==2.1.5
@@ -59,6 +61,7 @@ tzdata==2026.5
 tzlocal==5.4.5
 ua-parser==1.0.2
 ua-parser-builtins==202610
+urllib3==2.8.0
 user-agents==2.2.0
 uvicorn==0.54.0
 vine==5.1.0
